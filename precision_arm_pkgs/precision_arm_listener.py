@@ -8,19 +8,20 @@ import time
 from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
 
 DXL_ID_LIST = [1, 2, 3, 4, 5]
-STRAIGHT_POSITION = 2047
+STRAIGHT_POSITION = 2047 # This may not necessarily be the same in all initalizations and across both arms
 
 # TODO: Find min and max for big arm
 # MAX_POS = 3350
 # MIN_POS = 850
 
 # TODO: Get correct values for larger arm motors
+ADDR_HOMING_OFFSET =  20
 ADDR_TORQUE_ENABLE    = 64
 ADDR_GOAL_POSITION    = 116
 ADDR_PRESENT_POSITION = 132
 BAUDRATE              = 57600
 PROTOCOL_VERSION      = 2.0
-DEVICENAME            = '/dev/cu.usbserial-FT9HD8LL'
+DEVICENAME            = '/dev/tty0' # Change this!
 TORQUE_ENABLE         = 1
 TORQUE_DISABLE        = 0
 
@@ -48,8 +49,52 @@ class LargerArmController(Node):
             self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
         
         self.move_motors_to_straight_slowly()
+        self.zero_motors()
         self.get_logger().info("Larger Arm Controller node initialized in straight position.")
     
+    def zero_motors(self):
+        for dxl_id in DXL_ID_LIST:
+            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(
+                self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_DISABLE)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Torque disabled for Homing Offset adjustment.")
+            time.sleep(0.1)  # Short delay
+
+            present_position, dxl_comm_result, dxl_error = self.packetHandler.read4ByteTxRx(
+                self.portHandler, dxl_id, ADDR_PRESENT_POSITION)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Current Present Position:", present_position)
+
+            new_homing_offset = -present_position
+            print("Setting Homing Offset to:", new_homing_offset)
+
+            dxl_comm_result, dxl_error = self.packetHandler.write4ByteTxRx(
+                self.portHandler, dxl_id, ADDR_HOMING_OFFSET, new_homing_offset)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Homing Offset successfully set.")
+
+            # STEP 5: Re-enable Torque
+            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(
+                self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Torque re-enabled.")
+
     def move_motors_to_straight_slowly(self):
         for dxl_id in DXL_ID_LIST:
             current_position, _, _ = self.packetHandler.read4ByteTxRx(
