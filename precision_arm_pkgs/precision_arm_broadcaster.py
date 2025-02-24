@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""
-A ROS2 Humble node that integrates Dynamixel motor control with ROS2.
-This node:
-  • Initializes the Dynamixel motors using the Dynamixel SDK.
-  • Moves the motors to predefined straight positions (2047) slowly.
-  • Keeps the motors enabled and continuously reads their current positions.
-  • Publishes the joint positions as sensor_msgs/JointState for use
-    (e.g., as a controller for a larger-scale robotic arm).
-"""
 
 import rclpy
 from rclpy.node import Node
@@ -22,12 +13,13 @@ STRAIGHT_POSITION = 2047
 MAX_POS = 3350
 MIN_POS = 850
 
+ADDR_HOMING_OFFSET = 20
 ADDR_TORQUE_ENABLE    = 64
 ADDR_GOAL_POSITION    = 116
 ADDR_PRESENT_POSITION = 132
 BAUDRATE              = 57600
 PROTOCOL_VERSION      = 2.0
-DEVICENAME            = '/dev/cu.usbserial-FT9HD8LL'
+DEVICENAME            = '/dev/tty0' # Change this!
 TORQUE_ENABLE         = 1
 TORQUE_DISABLE        = 0
 
@@ -52,6 +44,7 @@ class DynamixelArmController(Node):
             self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
         
         self.move_motors_to_straight_slowly()
+        self.zero_motors()
         self.joint_names = [f'joint{i}' for i in DXL_ID_LIST]
         self.get_logger().info("Dynamixel Arm Controller node initialized.")
     
@@ -66,8 +59,49 @@ class DynamixelArmController(Node):
                 time.sleep(0.05)
             self.packetHandler.write4ByteTxRx(self.portHandler, dxl_id, ADDR_GOAL_POSITION, target_position)
             time.sleep(0.1)
-        self.get_logger().info("Motors moved to straight positions slowly.")
-    
+        self.get_logger().info("Motors moved to straight positions.")
+    def zero_motors(self):
+        for dxl_id in DXL_ID_LIST:
+            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(
+                self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_DISABLE)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Torque disabled for Homing Offset adjustment.")
+            time.sleep(0.1)  # Short delay
+
+            present_position, dxl_comm_result, dxl_error = self.packetHandler.read4ByteTxRx(
+                self.portHandler, dxl_id, ADDR_PRESENT_POSITION)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Current Present Position:", present_position)
+
+            new_homing_offset = -present_position
+            print("Setting Homing Offset to:", new_homing_offset)
+
+            dxl_comm_result, dxl_error = self.packetHandler.write4ByteTxRx(
+                self.portHandler, dxl_id, ADDR_HOMING_OFFSET, new_homing_offset)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Homing Offset successfully set.")
+
+            # STEP 5: Re-enable Torque
+            dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(
+                self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
+            if dxl_comm_result != COMM_SUCCESS:
+                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+            elif dxl_error != 0:
+                print(self.packetHandler.getRxPacketError(dxl_error))
+            else:
+                print("Torque re-enabled.")
     def timer_callback(self):
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
