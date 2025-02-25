@@ -2,12 +2,12 @@
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import JointState
+from std_msgs.msg import Int32MultiArray
 import time
 
 from dynamixel_sdk import PortHandler, PacketHandler, COMM_SUCCESS
 
-DXL_ID_LIST = [1, 2, 3, 4, 5]
+DXL_ID_LIST = [1, 2, 3, 4, 5, 6, 7]
 STRAIGHT_POSITION = 2047 # This may not necessarily be the same in all initalizations and across both arms
 
 # TODO: Find min and max for big arm
@@ -25,12 +25,12 @@ DEVICENAME            = '/dev/tty0' # Change this!
 TORQUE_ENABLE         = 1
 TORQUE_DISABLE        = 0
 
-class LargerArmController(Node):
+class PrecisionArmListener(Node):
     def __init__(self):
         super().__init__('larger_arm_controller')
         
         self.subscription = self.create_subscription(
-            JointState,
+            Int32MultiArray,
             'joint_states',  #Probably change this b/c it might conflict with other names
             self.joint_state_callback,
             10)
@@ -48,7 +48,7 @@ class LargerArmController(Node):
         for dxl_id in DXL_ID_LIST:
             self.packetHandler.write1ByteTxRx(self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
         
-        self.move_motors_to_straight_slowly()
+        self.move_motors_to_straight()
         self.zero_motors()
         self.get_logger().info("Larger Arm Controller node initialized in straight position.")
     
@@ -57,45 +57,46 @@ class LargerArmController(Node):
             dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(
                 self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_DISABLE)
             if dxl_comm_result != COMM_SUCCESS:
-                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+                self.get_logger().error(self.packetHandler.getTxRxResult(dxl_comm_result))
             elif dxl_error != 0:
-                print(self.packetHandler.getRxPacketError(dxl_error))
+                self.get_logger().error(self.packetHandler.getRxPacketError(dxl_error))
             else:
-                print("Torque disabled for Homing Offset adjustment.")
+                self.get_logger().info("Torque disabled for Homing Offset adjustment.")
             time.sleep(0.1)  # Short delay
 
             present_position, dxl_comm_result, dxl_error = self.packetHandler.read4ByteTxRx(
                 self.portHandler, dxl_id, ADDR_PRESENT_POSITION)
             if dxl_comm_result != COMM_SUCCESS:
-                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+                self.get_logger().error(self.packetHandler.getTxRxResult(dxl_comm_result))
             elif dxl_error != 0:
-                print(self.packetHandler.getRxPacketError(dxl_error))
+                self.get_logger().error(self.packetHandler.getRxPacketError(dxl_error))
             else:
-                print("Current Present Position:", present_position)
+                self.get_logger().info("Current Present Position:", present_position)
 
             new_homing_offset = -present_position
-            print("Setting Homing Offset to:", new_homing_offset)
+            self.get_logger().info("Setting Homing Offset to:", new_homing_offset)
 
             dxl_comm_result, dxl_error = self.packetHandler.write4ByteTxRx(
                 self.portHandler, dxl_id, ADDR_HOMING_OFFSET, new_homing_offset)
             if dxl_comm_result != COMM_SUCCESS:
-                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+                self.get_logger().error(self.packetHandler.getTxRxResult(dxl_comm_result))
             elif dxl_error != 0:
-                print(self.packetHandler.getRxPacketError(dxl_error))
+                self.get_logger().error(self.packetHandler.getRxPacketError(dxl_error))
             else:
-                print("Homing Offset successfully set.")
+                self.get_logger().info("Homing Offset successfully set.")
 
             # STEP 5: Re-enable Torque
             dxl_comm_result, dxl_error = self.packetHandler.write1ByteTxRx(
                 self.portHandler, dxl_id, ADDR_TORQUE_ENABLE, TORQUE_ENABLE)
             if dxl_comm_result != COMM_SUCCESS:
-                print(self.packetHandler.getTxRxResult(dxl_comm_result))
+                self.get_logger().error(self.packetHandler.getTxRxResult(dxl_comm_result))
             elif dxl_error != 0:
-                print(self.packetHandler.getRxPacketError(dxl_error))
+                self.get_logger().error(self.packetHandler.getRxPacketError(dxl_error))
             else:
-                print("Torque re-enabled.")
+                self.get_logger().info("Torque re-enabled.")
 
-    def move_motors_to_straight_slowly(self):
+    # THESE STRAIGHT POSITIONS AREN'T ACTUALLY CORRECT, DO IT MANUALLY FOR NOW
+    def move_motors_to_straight(self):
         for dxl_id in DXL_ID_LIST:
             current_position, _, _ = self.packetHandler.read4ByteTxRx(
                 self.portHandler, dxl_id, ADDR_PRESENT_POSITION)
@@ -111,12 +112,12 @@ class LargerArmController(Node):
             time.sleep(0.1)
         self.get_logger().info("Larger arm motors moved to straight positions.")
     
-    def joint_state_callback(self, msg: JointState):
-        if len(msg.position) < len(DXL_ID_LIST):
+    def joint_state_callback(self, msg: Int32MultiArray):
+        if len(msg.data) < len(DXL_ID_LIST):
             self.get_logger().error("Received joint state message with insufficient positions.")
             return
         for i, dxl_id in enumerate(DXL_ID_LIST):
-            target_position = int(msg.position[i])
+            target_position = msg.data[i]
             self.packetHandler.write4ByteTxRx(
                 self.portHandler, dxl_id, ADDR_GOAL_POSITION, target_position)
     
@@ -129,7 +130,7 @@ class LargerArmController(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = LargerArmController()
+    node = PrecisionArmListener()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
